@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Send a Discord message if any event in events.json starts within the next N days.
+"""Remind about events in events.json on Discord, and clean up events that already ended.
 
-Sends nothing (and exits 0) when there are no upcoming events.
+Reminders go out when an event STARTS exactly 5, 3 or 1 days from today
+(change with --remind-days). Nothing is sent, and the script exits 0, when no event matches.
 The webhook URL is read from the DISCORD_WEBHOOK_URL environment variable.
 
-    python notify.py                      # real run
-    python notify.py --dry-run            # print the message instead of sending
-    python notify.py --today 2026-10-02   # pretend today is another date
+    python notify.py                       # real run
+    python notify.py --dry-run             # print the message instead of sending
+    python notify.py --remind-days 7,2,0   # different reminder days
+    python notify.py --prune-only          # remove events that already ended, send nothing
+    python notify.py --today 2026-10-02    # pretend today is another date
 """
 import argparse
 import json
@@ -14,7 +17,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -38,12 +41,30 @@ def load_events(path):
     return events
 
 
-def in_window(events, today, days):
-    last = today + timedelta(days=days)
+def select_due(events, today, remind_days):
+    """Events whose start date is exactly N days away, for N in remind_days."""
     return sorted(
-        (e for e in events if today <= e["start"] <= last),
+        (e for e in events if (e["start"] - today).days in remind_days),
         key=lambda e: (e["start"], e["end"]),
     )
+
+
+def prune_file(path, today, dry_run=False):
+    """Remove events whose end date is before today. Returns the removed items.
+
+    Works on the raw JSON items so any extra fields you added are preserved.
+    The file is only rewritten when something is actually removed.
+    """
+    with open(path, encoding="utf-8") as fh:
+        raw = json.load(fh)
+    keep, removed = [], []
+    for item in raw:
+        (removed if date.fromisoformat(item["end"]) < today else keep).append(item)
+    if removed and not dry_run:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(keep, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+    return removed
 
 
 def fmt_date(d):
@@ -55,8 +76,8 @@ def when(start, today):
     return "today" if n == 0 else "tomorrow" if n == 1 else f"in {n} days"
 
 
-def build_message(events, today, days):
-    lines = [f"📅 **Fechas importantes en los proximos {days} dias**", ""]
+def build_message(events, today):
+    lines = ["📅 **UNLaM: upcoming dates**", ""]
     for e in events:
         span = fmt_date(e["start"])
         if e["end"] != e["start"]:
@@ -86,27 +107,49 @@ def send_discord(url, content):
         return resp.status
 
 
+def parse_days(text):
+    try:
+        days = {int(part) for part in text.split(",") if part.strip()}
+    except ValueError:
+        raise argparse.ArgumentTypeError("use comma-separated whole numbers, e.g. 5,3,1")
+    if not days or min(days) < 0:
+        raise argparse.ArgumentTypeError("need at least one day, and days can't be negative")
+    return days
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--file", default="events.json")
-    ap.add_argument("--days", type=int, default=5, help="look-ahead window in days (default 5)")
+    ap.add_argument("--remind-days", type=parse_days, default=parse_days("5,3,1"),
+                    help="days before an event's start to send a reminder (default 5,3,1)")
     ap.add_argument("--today", help="override today's date (YYYY-MM-DD)")
-    ap.add_argument("--dry-run", action="store_true", help="print the message instead of sending it")
+    ap.add_argument("--dry-run", action="store_true", help="print instead of sending / writing")
+    ap.add_argument("--prune-only", action="store_true", help="remove ended events and exit; sends nothing")
     args = ap.parse_args()
 
     today = date.fromisoformat(args.today) if args.today else datetime.now(TZ).date()
+
+    if args.prune_only:
+        removed = prune_file(args.file, today, dry_run=args.dry_run)
+        verb = "Would remove" if args.dry_run else "Removed"
+        print(f"{today}: {verb} {len(removed)} ended event(s).")
+        for item in removed:
+            print(f"  - {item['end']}  {item['activity']}")
+        return 0
+
     events = load_events(args.file)
 
     if not any(e["end"] >= today for e in events):
-        # Not an error for the user's purposes, but worth seeing in the Actions log.
+        # Worth seeing in the Actions log: the file needs new dates.
         print(f"WARNING: {args.file} has no events on or after {today}; the calendar file may be outdated.", file=sys.stderr)
 
-    due = in_window(events, today, args.days)
+    due = select_due(events, today, args.remind_days)
     if not due:
-        print(f"{today}: no events starting in the next {args.days} days. Nothing sent.")
+        days_txt = ", ".join(str(d) for d in sorted(args.remind_days, reverse=True))
+        print(f"{today}: no event starts {days_txt} days from today. Nothing sent.")
         return 0
 
-    message = build_message(due, today, args.days)
+    message = build_message(due, today)
     if args.dry_run:
         print(message)
         return 0

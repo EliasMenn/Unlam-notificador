@@ -1,21 +1,40 @@
-name: Recordatorio Automatico
- 
+name: UNLaM date reminder
+
 on:
   schedule:
+    # 15:30 Buenos Aires = 18:30 UTC (Argentina has no daylight saving time).
+    # GitHub cron is always UTC, and runs can start a few minutes late.
     - cron: "30 18 * * *"
   workflow_dispatch: # lets you run it manually from the Actions tab to test
- 
+
 permissions:
-  contents: read
- 
+  contents: write # needed to commit the cleaned-up events.json
+
 jobs:
   notify:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
- 
-      - name: Revisa events.json y notifica
+
+      # Reminders go out 5, 3 and 1 days before an event starts.
+      - name: Notify Discord
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: python3 notify.py --file events.json --days 5
+        run: python3 notify.py --file events.json --remind-days 5,3,1
+
+      # Runs even if the notification failed, so old events don't pile up.
+      # Only commits when something was actually removed.
+      - name: Remove ended events
+        if: always()
+        run: |
+          python3 notify.py --file events.json --prune-only
+          if ! git diff --quiet -- events.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add events.json
+            git commit -m "Remove ended events"
+            git push
+          else
+            echo "Nothing to remove."
+          fi

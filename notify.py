@@ -77,7 +77,7 @@ def when(start, today):
 
 
 def build_message(events, today):
-    lines = ["📅 **UNLaM: upcoming dates**", ""]
+    lines = ["📅 **Fechas Importantes:**", ""]
     for e in events:
         span = fmt_date(e["start"])
         if e["end"] != e["start"]:

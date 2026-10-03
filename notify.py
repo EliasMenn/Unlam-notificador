@@ -12,9 +12,9 @@ The webhook URL is read from the DISCORD_WEBHOOK_URL environment variable.
     python notify.py --placeholder-alert --removed 3   # send the "no real events left" alert
     python notify.py --today 2026-10-02    # pretend today is another date
 
-"No real events left" alert: when a cleanup run removes events and the only element left in
-events.json is the PLACEHOLDER event below, the workflow sends one message to a second Discord
-channel (webhook in DISCORD_WEBHOOK_URL_2). It fires only on the day of the cleanup.
+"No real events left" alert: on every run where, after the cleanup, the only element left in
+events.json is the PLACEHOLDER event below, the workflow sends a message to a second Discord
+channel (webhook in DISCORD_WEBHOOK_URL_2). It repeats daily until real dates are added.
 """
 import argparse
 import json
@@ -191,11 +191,11 @@ def is_placeholder(item):
 
 
 def build_placeholder_alert(removed_count):
+    head = "📭 **UNLaM: no quedan eventos reales en el calendario.**\n"
+    if removed_count == 0:  # nothing was cleaned up today: the file was already down to the placeholder
+        return head + "En `events.json` solo queda el evento de relleno. Hay que cargar las fechas nuevas."
     done = "Se eliminó 1 evento terminado" if removed_count == 1 else f"Se eliminaron {removed_count} eventos terminados"
-    return (
-        "📭 **UNLaM: no quedan eventos reales en el calendario.**\n"
-        f"{done} y en `events.json` solo queda el evento de relleno. Hay que cargar las fechas nuevas."
-    )
+    return head + f"{done} y en `events.json` solo queda el evento de relleno. Hay que cargar las fechas nuevas."
 
 
 def write_github_output(**values):
@@ -247,8 +247,9 @@ def main():
             print(f"{today}: {verb} {len(removed)} ended event(s).")
             for item in removed:
                 print(f"  - {item['end']}  {item['activity']}")
-            # Alert only on the day the cleanup leaves nothing but the placeholder.
-            if removed and len(kept) == 1 and is_placeholder(kept[0]):
+            # Alert on every run while the placeholder is the only thing left in the file,
+            # whether or not this run removed anything.
+            if len(kept) == 1 and is_placeholder(kept[0]):
                 print("Only the placeholder event is left: no real events remain.")
                 if not args.dry_run:
                     write_github_output(only_placeholder="true", removed=len(removed))

@@ -1,58 +1,9 @@
 [
   {
-    "section": "Instancia Diciembre 2026",
-    "activity": "Envío de solicitud de examen libres",
-    "start": "2026-10-05",
-    "end": "2026-10-11",
+    "section": "Instancia",
+    "activity": "Nombre de evento",
+    "start": "2050-1-1",
+    "end": "2050-1-2",
     "note": ""
   },
-  {
-    "section": "Instancia Diciembre 2026",
-    "activity": "Inscripción a exámenes finales, libres y acreditaciones",
-    "start": "2026-10-03",
-    "end": "2026-11-13",
-    "note": ""
-  },
-  {
-    "section": "Instancia Diciembre 2026",
-    "activity": "Verificación de inscripción",
-    "start": "2026-10-07",
-    "end": "2026-11-18",
-    "note": ""
-  },
-  {
-    "section": "Segundo Cuatrimestre 2026",
-    "activity": "Finalización de clases",
-    "start": "2026-12-05",
-    "end": "2026-12-05",
-    "note": ""
-  },
-  {
-    "section": "Instancia Diciembre 2026",
-    "activity": "Exámenes",
-    "start": "2026-12-10",
-    "end": "2026-12-19",
-    "note": ""
-  },
-  {
-    "section": "Tercer Cuatrimestre 2026 – Curso de verano 2027",
-    "activity": "Inscripción a materias de EFC",
-    "start": "2026-12-11",
-    "end": "2026-12-11",
-    "note": ""
-  },
-  {
-    "section": "Tercer Cuatrimestre 2026 – Curso de verano 2027",
-    "activity": "Inscripción a materias Departamentos",
-    "start": "2026-12-14",
-    "end": "2026-12-17",
-    "note": ""
-  },
-  {
-    "section": "Tercer Cuatrimestre 2026 – Curso de verano 2027",
-    "activity": "Verificación de inscripción",
-    "start": "2026-12-22",
-    "end": "2026-12-22",
-    "note": "de 10 a 18h"
-  }
 ]

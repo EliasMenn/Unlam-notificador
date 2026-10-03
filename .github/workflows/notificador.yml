@@ -4,7 +4,7 @@ on:
   schedule:
     # 15:30 Buenos Aires = 18:30 UTC (Argentina has no daylight saving time).
     # GitHub cron is always UTC, and runs can start a few minutes late.
-    - cron: "30 18 * * *"
+    - cron: "54 18 * * *"
   workflow_dispatch: # lets you run it manually from the Actions tab to test
 
 permissions:

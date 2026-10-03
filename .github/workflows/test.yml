@@ -7,4 +7,5 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "El cron funciona: $(date -u)"
+      - name: Ping
+        run: echo "El cron funciona - $(date -u)"

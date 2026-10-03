@@ -8,7 +8,7 @@ on:
   workflow_dispatch: # lets you run it manually from the Actions tab to test
 
 permissions:
-  contents: write # needed to commit the cleaned-up events.json
+  contents: write # needed to commit the cleaned-up events.json and alert_state.json
 
 jobs:
   notify:
@@ -25,14 +25,15 @@ jobs:
 
       # Runs even if the notification failed, so old events don't pile up.
       # Only commits when something was actually removed.
-      # If the file holds only the placeholder event after the cleanup (whether or not anything
-      # was removed today), notify.py sets the output only_placeholder=true (and removed=N)
-      # for the next step.
+      # If the file holds only the placeholder event after the cleanup, notify.py decides whether
+      # the "no real events left" alert is due (right away the first time or on the day events are
+      # removed, then once every --alert-every days) and, if so, sets the output send_alert=true
+      # (and removed=N) for the next step.
       - name: Remove ended events
         id: prune
         if: always()
         run: |
-          python3 notify.py --file events.json --prune-only
+          python3 notify.py --file events.json --prune-only --alert-every 10
           if ! git diff --quiet -- events.json; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -43,9 +44,26 @@ jobs:
             echo "Nothing to remove."
           fi
 
-      # Second channel: every run while nothing but the placeholder event is left in events.json.
+      # Second channel: only when the alert is due (see above).
       - name: Alert second channel (no real events left)
-        if: always() && steps.prune.outputs.only_placeholder == 'true'
+        id: alert
+        if: always() && steps.prune.outputs.send_alert == 'true'
         env:
           DISCORD_WEBHOOK_URL_2: ${{ secrets.DISCORD_WEBHOOK_URL_2 }}
         run: python3 notify.py --placeholder-alert --removed ${{ steps.prune.outputs.removed }}
+
+      # Remember the date of the alert, but only if it was really sent. If the send failed,
+      # nothing is recorded and the next run tries again.
+      - name: Remember the alert date
+        if: steps.alert.outcome == 'success'
+        run: |
+          python3 notify.py --record-alert
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add alert_state.json
+          if git diff --cached --quiet; then
+            echo "Alert date was already recorded."
+          else
+            git commit -m "Record date of the last 'no real events left' alert"
+            git push
+          fi

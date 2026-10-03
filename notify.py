@@ -65,9 +65,47 @@ def _field(item, name, where):
         raise EventsFileError(f"{where}: missing the field {name!r}.") from None
 
 
-def load_events(path):
+# Matches a whole JSON string (kept as is) or a comma that sits right before a closing ] or }.
+_STRING_OR_TRAILING_COMMA = re.compile(r'("(?:\\.|[^"\\])*")|,(\s*[}\]])')
+
+
+def read_events_json(path):
+    """Read events.json and return the list inside.
+
+    A comma after the last item (the most common slip when editing by hand) is tolerated with a
+    warning in the log. Any other JSON mistake raises EventsFileError saying which line to look at.
+    """
     with open(path, encoding="utf-8") as fh:
-        raw = json.load(fh)
+        text = fh.read()
+    if not text.strip():
+        raise EventsFileError(f"{path} is empty. It should contain at least []")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        # Drop commas before ] or } (outside strings). Line numbers stay the same.
+        fixed = _STRING_OR_TRAILING_COMMA.sub(lambda m: m.group(1) or m.group(2), text)
+        try:
+            data = json.loads(fixed)
+        except json.JSONDecodeError as err:
+            lines = text.splitlines()
+            shown = lines[err.lineno - 1].strip() if 0 < err.lineno <= len(lines) else ""
+            raise EventsFileError(
+                f"{path} is not valid JSON: {err.msg} at line {err.lineno}, column {err.colno} "
+                f"(line {err.lineno} reads: {shown!r}). Look for a missing or extra comma, quote or bracket "
+                "on or just before that line."
+            ) from None
+        print(
+            f"WARNING: {path} has a comma after the last item of a list (a trailing comma). "
+            "It was ignored this time; please remove it.",
+            file=sys.stderr,
+        )
+    if not isinstance(data, list):
+        raise EventsFileError(f"{path} must contain a list of events, like [ {{...}}, {{...}} ].")
+    return data
+
+
+def load_events(path):
+    raw = read_events_json(path)
     events = []
     for i, item in enumerate(raw, start=1):
         label = item.get("activity", "?") if isinstance(item, dict) else "?"
@@ -98,8 +136,7 @@ def prune_file(path, today, dry_run=False):
     Works on the raw JSON items so any extra fields you added are preserved.
     The file is only rewritten when something is actually removed.
     """
-    with open(path, encoding="utf-8") as fh:
-        raw = json.load(fh)
+    raw = read_events_json(path)
     keep, removed = [], []
     for i, item in enumerate(raw, start=1):
         label = item.get("activity", "?") if isinstance(item, dict) else "?"

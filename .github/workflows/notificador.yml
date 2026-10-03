@@ -4,7 +4,7 @@ on:
   schedule:
     # 15:30 Buenos Aires = 18:30 UTC (Argentina has no daylight saving time).
     # GitHub cron is always UTC, and runs can start a few minutes late.
-    - cron: "0 00 * * *"
+    - cron: "30 18 * * *"
   workflow_dispatch: # lets you run it manually from the Actions tab to test
 
 permissions:
@@ -25,7 +25,11 @@ jobs:
 
       # Runs even if the notification failed, so old events don't pile up.
       # Only commits when something was actually removed.
+      # If the file holds only the placeholder event after the cleanup (whether or not anything
+      # was removed today), notify.py sets the output only_placeholder=true (and removed=N)
+      # for the next step.
       - name: Remove ended events
+        id: prune
         if: always()
         run: |
           python3 notify.py --file events.json --prune-only
@@ -38,3 +42,10 @@ jobs:
           else
             echo "Nothing to remove."
           fi
+
+      # Second channel: every run while nothing but the placeholder event is left in events.json.
+      - name: Alert second channel (no real events left)
+        if: always() && steps.prune.outputs.only_placeholder == 'true'
+        env:
+          DISCORD_WEBHOOK_URL_2: ${{ secrets.DISCORD_WEBHOOK_URL_2 }}
+        run: python3 notify.py --placeholder-alert --removed ${{ steps.prune.outputs.removed }}

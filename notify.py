@@ -14,6 +14,7 @@ The webhook URL is read from the DISCORD_WEBHOOK_URL environment variable.
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -24,18 +25,43 @@ TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 DISCORD_LIMIT = 2000  # max characters in a webhook message
 
 
+class EventsFileError(ValueError):
+    """events.json contains something the script can't understand."""
+
+
+def parse_date(value, where):
+    """Read a YYYY-MM-DD date. Also accepts non-padded forms like 2026-10-3 or 2026/10/3."""
+    parts = re.split(r"[-/]", str(value).strip())
+    try:
+        if len(parts) != 3 or len(parts[0]) != 4:
+            raise ValueError
+        y, m, d = (int(p) for p in parts)
+        return date(y, m, d)
+    except ValueError:
+        raise EventsFileError(f"{where}: can't read the date {value!r}. Use YYYY-MM-DD, for example 2026-10-03.") from None
+
+
+def _field(item, name, where):
+    try:
+        return item[name]
+    except (KeyError, TypeError):
+        raise EventsFileError(f"{where}: missing the field {name!r}.") from None
+
+
 def load_events(path):
     with open(path, encoding="utf-8") as fh:
         raw = json.load(fh)
     events = []
-    for item in raw:
+    for i, item in enumerate(raw, start=1):
+        label = item.get("activity", "?") if isinstance(item, dict) else "?"
+        where = f"{path}, item #{i} ({label})"
         events.append(
             {
-                "activity": item["activity"],
+                "activity": _field(item, "activity", where),
                 "section": item.get("section", ""),
                 "note": item.get("note", ""),
-                "start": date.fromisoformat(item["start"]),
-                "end": date.fromisoformat(item["end"]),
+                "start": parse_date(_field(item, "start", where), where),
+                "end": parse_date(_field(item, "end", where), where),
             }
         )
     return events
@@ -58,8 +84,11 @@ def prune_file(path, today, dry_run=False):
     with open(path, encoding="utf-8") as fh:
         raw = json.load(fh)
     keep, removed = [], []
-    for item in raw:
-        (removed if date.fromisoformat(item["end"]) < today else keep).append(item)
+    for i, item in enumerate(raw, start=1):
+        label = item.get("activity", "?") if isinstance(item, dict) else "?"
+        where = f"{path}, item #{i} ({label})"
+        end = parse_date(_field(item, "end", where), where)  # raises before anything is rewritten
+        (removed if end < today else keep).append(item)
     if removed and not dry_run:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(keep, fh, ensure_ascii=False, indent=2)
@@ -77,7 +106,7 @@ def when(start, today):
 
 
 def build_message(events, today):
-    lines = ["📅 **Fechas Importantes:**", ""]
+    lines = ["📅 **UNLaM: upcoming dates**", ""]
     for e in events:
         span = fmt_date(e["start"])
         if e["end"] != e["start"]:
@@ -129,15 +158,21 @@ def main():
 
     today = date.fromisoformat(args.today) if args.today else datetime.now(TZ).date()
 
-    if args.prune_only:
-        removed = prune_file(args.file, today, dry_run=args.dry_run)
-        verb = "Would remove" if args.dry_run else "Removed"
-        print(f"{today}: {verb} {len(removed)} ended event(s).")
-        for item in removed:
-            print(f"  - {item['end']}  {item['activity']}")
-        return 0
-
-    events = load_events(args.file)
+    try:
+        if args.prune_only:
+            removed = prune_file(args.file, today, dry_run=args.dry_run)
+            verb = "Would remove" if args.dry_run else "Removed"
+            print(f"{today}: {verb} {len(removed)} ended event(s).")
+            for item in removed:
+                print(f"  - {item['end']}  {item['activity']}")
+            return 0
+        events = load_events(args.file)
+    except EventsFileError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"ERROR: can't read {args.file}: {exc}", file=sys.stderr)
+        return 1
 
     if not any(e["end"] >= today for e in events):
         # Worth seeing in the Actions log: the file needs new dates.

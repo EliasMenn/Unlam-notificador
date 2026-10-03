@@ -12,9 +12,11 @@ The webhook URL is read from the DISCORD_WEBHOOK_URL environment variable.
     python notify.py --placeholder-alert --removed 3   # send the "no real events left" alert
     python notify.py --today 2026-10-02    # pretend today is another date
 
-"No real events left" alert: on every run where, after the cleanup, the only element left in
-events.json is the PLACEHOLDER event below, the workflow sends a message to a second Discord
-channel (webhook in DISCORD_WEBHOOK_URL_2). It repeats daily until real dates are added.
+"No real events left" alert: while, after the cleanup, the only element left in events.json is
+the PLACEHOLDER event below, the workflow sends a message to a second Discord channel (webhook
+in DISCORD_WEBHOOK_URL_2). It goes out right away (first time, or the day the cleanup removes
+events) and then repeats every --alert-every days (default 10). The date of the last alert is
+kept in alert_state.json, which the workflow commits after a successful send.
 """
 import argparse
 import json
@@ -40,6 +42,7 @@ PLACEHOLDER = {
     "note": "",
 }
 ALERT_ENV = "DISCORD_WEBHOOK_URL_2"  # environment variable holding the second channel's webhook
+STATE_FILE = "alert_state.json"  # remembers the date of the last "no real events left" alert
 
 
 class EventsFileError(ValueError):
@@ -245,6 +248,38 @@ def write_github_output(**values):
             fh.write(f"{key}={value}\n")
 
 
+def read_last_alert(path):
+    """Date of the last alert, or None if there is no (readable) state file."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return parse_date(json.load(fh)["last_alert"], path)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, KeyError, TypeError):  # includes bad JSON and EventsFileError
+        print(f"WARNING: can't read {path}; treating it as 'no alert sent yet'.", file=sys.stderr)
+        return None
+
+
+def record_alert(path, today):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"last_alert": today.isoformat()}, fh)
+        fh.write("\n")
+
+
+def alert_due(removed_count, last_alert, today, every):
+    """Decide whether the "no real events left" alert goes out today. Returns (due, reason).
+
+    It always goes out the day events are removed, and when no alert has ever been sent;
+    otherwise only once `every` days have passed since the last one.
+    """
+    if removed_count > 0:
+        return True, "the cleanup removed events today"
+    if last_alert is None:
+        return True, "no alert has been sent yet"
+    days = (today - last_alert).days
+    return days >= every, f"last alert was on {last_alert}, {days} day(s) ago"
+
+
 def parse_days(text):
     try:
         days = {int(part) for part in text.split(",") if part.strip()}
@@ -266,9 +301,21 @@ def main():
     ap.add_argument("--placeholder-alert", action="store_true",
                     help=f"send the 'no real events left' message to the webhook in {ALERT_ENV}")
     ap.add_argument("--removed", type=int, default=0, help="how many events the cleanup removed (used in the alert text)")
+    ap.add_argument("--alert-every", type=int, default=10, metavar="DAYS",
+                    help="repeat the 'no real events left' alert every this many days (default 10; 0 = every run)")
+    ap.add_argument("--state-file", default=STATE_FILE, help=f"where the last alert date is kept (default {STATE_FILE})")
+    ap.add_argument("--record-alert", action="store_true", help="save today's date as the date of the last alert and exit")
     args = ap.parse_args()
+    if args.alert_every < 0:
+        ap.error("--alert-every can't be negative")
 
     today = date.fromisoformat(args.today) if args.today else datetime.now(TZ).date()
+
+    if args.record_alert:
+        if not args.dry_run:
+            record_alert(args.state_file, today)
+        print(f"{today}: {'would record' if args.dry_run else 'recorded'} the alert date in {args.state_file}.")
+        return 0
 
     if args.placeholder_alert:
         message = build_placeholder_alert(args.removed)
@@ -284,12 +331,17 @@ def main():
             print(f"{today}: {verb} {len(removed)} ended event(s).")
             for item in removed:
                 print(f"  - {item['end']}  {item['activity']}")
-            # Alert on every run while the placeholder is the only thing left in the file,
-            # whether or not this run removed anything.
+            # While the placeholder is the only thing left, alert right away (first time, or the day
+            # events were removed) and then once every --alert-every days.
             if len(kept) == 1 and is_placeholder(kept[0]):
                 print("Only the placeholder event is left: no real events remain.")
-                if not args.dry_run:
-                    write_github_output(only_placeholder="true", removed=len(removed))
+                due, reason = alert_due(len(removed), read_last_alert(args.state_file), today, args.alert_every)
+                if due:
+                    print(f"Alert due: {reason}.")
+                    if not args.dry_run:
+                        write_github_output(send_alert="true", removed=len(removed))
+                else:
+                    print(f"Alert not due yet: {reason}. It repeats every {args.alert_every} days.")
             return 0
         events = load_events(args.file)
     except EventsFileError as exc:

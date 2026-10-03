@@ -1,54 +1,5 @@
 [
   {
-    "section": "Instancia Julio 2026",
-    "activity": "Homologación interdepartamental",
-    "start": "2026-10-3",
-    "end": "2026-07-03",
-    "note": "De 10 a 18 horas"
-  },
-  {
-    "section": "Instancia Julio 2026",
-    "activity": "Exámenes",
-    "start": "2026-10-5",
-    "end": "2026-08-01",
-    "note": ""
-  },
-  {
-    "section": "Segundo Cuatrimestre 2026",
-    "activity": "Inscripción a materias EFC",
-    "start": "2026-10-7",
-    "end": "2026-07-24",
-    "note": ""
-  },
-  {
-    "section": "Segundo Cuatrimestre 2026",
-    "activity": "Inscripción a materias Departamentos",
-    "start": "2026-07-27",
-    "end": "2026-07-30",
-    "note": ""
-  },
-  {
-    "section": "Segundo Cuatrimestre 2026",
-    "activity": "Verificación de inscripción a materias EFC",
-    "start": "2026-08-04",
-    "end": "2026-08-04",
-    "note": "de 10 a 18h."
-  },
-  {
-    "section": "Segundo Cuatrimestre 2026",
-    "activity": "Verificación de inscripción a materias Departamentos",
-    "start": "2026-08-06",
-    "end": "2026-08-06",
-    "note": "de 10 a 18h."
-  },
-  {
-    "section": "Segundo Cuatrimestre 2026",
-    "activity": "Inicio de clases",
-    "start": "2026-08-18",
-    "end": "2026-08-18",
-    "note": ""
-  },
-  {
     "section": "Instancia Diciembre 2026",
     "activity": "Envío de solicitud de examen libres",
     "start": "2026-10-05",

@@ -9,7 +9,12 @@ The webhook URL is read from the DISCORD_WEBHOOK_URL environment variable.
     python notify.py --dry-run             # print the message instead of sending
     python notify.py --remind-days 7,2,0   # different reminder days
     python notify.py --prune-only          # remove events that already ended, send nothing
+    python notify.py --placeholder-alert --removed 3   # send the "no real events left" alert
     python notify.py --today 2026-10-02    # pretend today is another date
+
+"No real events left" alert: when a cleanup run removes events and the only element left in
+events.json is the PLACEHOLDER event below, the workflow sends one message to a second Discord
+channel (webhook in DISCORD_WEBHOOK_URL_2). It fires only on the day of the cleanup.
 """
 import argparse
 import json
@@ -23,6 +28,18 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 DISCORD_LIMIT = 2000  # max characters in a webhook message
+
+# The filler event that keeps events.json from ever being empty. When it is the ONLY element
+# left after a cleanup, the second channel is notified. Dates are compared as dates, so
+# "2050-1-1" and "2050-01-01" are the same thing.
+PLACEHOLDER = {
+    "section": "Instancia",
+    "activity": "Nombre de evento",
+    "start": date(2050, 1, 1),
+    "end": date(2050, 1, 2),
+    "note": "",
+}
+ALERT_ENV = "DISCORD_WEBHOOK_URL_2"  # environment variable holding the second channel's webhook
 
 
 class EventsFileError(ValueError):
@@ -76,7 +93,7 @@ def select_due(events, today, remind_days):
 
 
 def prune_file(path, today, dry_run=False):
-    """Remove events whose end date is before today. Returns the removed items.
+    """Remove events whose end date is before today. Returns (removed, kept) lists of raw items.
 
     Works on the raw JSON items so any extra fields you added are preserved.
     The file is only rewritten when something is actually removed.
@@ -93,7 +110,7 @@ def prune_file(path, today, dry_run=False):
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(keep, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
-    return removed
+    return removed, keep
 
 
 def fmt_date(d):
@@ -136,6 +153,55 @@ def send_discord(url, content):
         return resp.status
 
 
+def send_from_env(env_name, message, ok_text):
+    """POST `message` to the webhook stored in environment variable `env_name`. Returns an exit code."""
+    url = os.environ.get(env_name, "").strip()
+    if not url:
+        print(f"ERROR: {env_name} is not set.", file=sys.stderr)
+        return 1
+    try:
+        status = send_discord(url, message)
+    except (urllib.error.URLError, TimeoutError) as exc:
+        # Never print the URL: it contains the webhook secret.
+        print(f"ERROR: could not send to Discord ({env_name}): {exc.__class__.__name__}: {getattr(exc, 'reason', exc)}", file=sys.stderr)
+        return 1
+    print(f"{ok_text} (HTTP {status}).")
+    return 0
+
+
+def is_placeholder(item):
+    """True if a raw events.json item is the filler event (same section, activity, note and dates)."""
+    try:
+        where = "placeholder check"
+        return (
+            item.get("section", "") == PLACEHOLDER["section"]
+            and item.get("activity") == PLACEHOLDER["activity"]
+            and item.get("note", "") == PLACEHOLDER["note"]
+            and parse_date(item["start"], where) == PLACEHOLDER["start"]
+            and parse_date(item["end"], where) == PLACEHOLDER["end"]
+        )
+    except (AttributeError, KeyError, EventsFileError):
+        return False
+
+
+def build_placeholder_alert(removed_count):
+    done = "Se eliminó 1 evento terminado" if removed_count == 1 else f"Se eliminaron {removed_count} eventos terminados"
+    return (
+        "📭 **UNLaM: no quedan eventos reales en el calendario.**\n"
+        f"{done} y en `events.json` solo queda el evento de relleno. Hay que cargar las fechas nuevas."
+    )
+
+
+def write_github_output(**values):
+    """Expose values to later workflow steps (no-op when not running inside GitHub Actions)."""
+    path = os.environ.get("GITHUB_OUTPUT")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as fh:
+        for key, value in values.items():
+            fh.write(f"{key}={value}\n")
+
+
 def parse_days(text):
     try:
         days = {int(part) for part in text.split(",") if part.strip()}
@@ -154,17 +220,32 @@ def main():
     ap.add_argument("--today", help="override today's date (YYYY-MM-DD)")
     ap.add_argument("--dry-run", action="store_true", help="print instead of sending / writing")
     ap.add_argument("--prune-only", action="store_true", help="remove ended events and exit; sends nothing")
+    ap.add_argument("--placeholder-alert", action="store_true",
+                    help=f"send the 'no real events left' message to the webhook in {ALERT_ENV}")
+    ap.add_argument("--removed", type=int, default=0, help="how many events the cleanup removed (used in the alert text)")
     args = ap.parse_args()
 
     today = date.fromisoformat(args.today) if args.today else datetime.now(TZ).date()
 
+    if args.placeholder_alert:
+        message = build_placeholder_alert(args.removed)
+        if args.dry_run:
+            print(message)
+            return 0
+        return send_from_env(ALERT_ENV, message, f"{today}: sent the 'no real events left' alert")
+
     try:
         if args.prune_only:
-            removed = prune_file(args.file, today, dry_run=args.dry_run)
+            removed, kept = prune_file(args.file, today, dry_run=args.dry_run)
             verb = "Would remove" if args.dry_run else "Removed"
             print(f"{today}: {verb} {len(removed)} ended event(s).")
             for item in removed:
                 print(f"  - {item['end']}  {item['activity']}")
+            # Alert only on the day the cleanup leaves nothing but the placeholder.
+            if removed and len(kept) == 1 and is_placeholder(kept[0]):
+                print("Only the placeholder event is left: no real events remain.")
+                if not args.dry_run:
+                    write_github_output(only_placeholder="true", removed=len(removed))
             return 0
         events = load_events(args.file)
     except EventsFileError as exc:
@@ -189,18 +270,7 @@ def main():
         print(message)
         return 0
 
-    url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
-    if not url:
-        print("ERROR: DISCORD_WEBHOOK_URL is not set.", file=sys.stderr)
-        return 1
-    try:
-        status = send_discord(url, message)
-    except (urllib.error.URLError, TimeoutError) as exc:
-        # Never print the URL: it contains the webhook secret.
-        print(f"ERROR: could not send to Discord: {exc.__class__.__name__}: {getattr(exc, 'reason', exc)}", file=sys.stderr)
-        return 1
-    print(f"{today}: sent {len(due)} event(s) to Discord (HTTP {status}).")
-    return 0
+    return send_from_env("DISCORD_WEBHOOK_URL", message, f"{today}: sent {len(due)} event(s) to Discord")
 
 
 if __name__ == "__main__":

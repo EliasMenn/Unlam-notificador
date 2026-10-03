@@ -113,30 +113,36 @@ def prune_file(path, today, dry_run=False):
     return removed, keep
 
 
+DAYS_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]  # date.weekday(): Monday = 0
+
+
 def fmt_date(d):
-    return d.strftime("%a %d/%m")
+    # Written by hand on purpose: strftime would use the runner's locale, which is English.
+    return f"{DAYS_ES[d.weekday()]} {d:%d/%m}"
 
 
 def when(start, today):
     n = (start - today).days
-    return "today" if n == 0 else "tomorrow" if n == 1 else f"in {n} days"
+    return "hoy" if n == 0 else "mañana" if n == 1 else f"en {n} días"
 
 
 def build_message(events, today):
-    lines = ["📅 **UNLaM: upcoming dates**", ""]
+    """Discord markdown: `##` for the title and `###` for each date, with the event underneath."""
+    lines = ["## 📅 Próximas fechas importantes"]
     for e in events:
         span = fmt_date(e["start"])
         if e["end"] != e["start"]:
             span += f" → {fmt_date(e['end'])}"
-        line = f"• **{span}** ({when(e['start'], today)}): {e['activity']}"
+        lines.append(f"### {span} ({when(e['start'], today)})")
+        detail = e["activity"]
         if e["section"]:
-            line += f" _[{e['section']}]_"
+            detail += f" · _{e['section']}_"
         if e["note"]:
-            line += f" ({e['note']})"
-        lines.append(line)
+            detail += f" ({e['note']})"
+        lines.append(detail)
     msg = "\n".join(lines)
     if len(msg) > DISCORD_LIMIT:
-        msg = msg[: DISCORD_LIMIT - 20].rsplit("\n", 1)[0] + "\n… (truncated)"
+        msg = msg[: DISCORD_LIMIT - 30].rsplit("\n### ", 1)[0] + "\n\n… (mensaje recortado)"
     return msg
 
 
